@@ -1,0 +1,58 @@
+<job>
+  problem_id = nojet
+</job>
+
+<mesh>
+  mesh_type = cartesian
+  nx1 = 64
+  nx2 = 64
+  nx3 = 64
+  x1min = -0.5
+  x1max =  0.5
+  x2min = -0.5
+  x2max =  0.5
+  x3min = -0.5
+  x3max =  0.5
+  
+  ix1_bc = outflow
+  ox1_bc = outflow
+  ix2_bc = outflow
+  ox2_bc = outflow
+  ix3_bc = outflow
+  ox3_bc = outflow	
+</mesh>
+  
+<time>
+  tlim = 0.5
+  nlim = 5000
+  cfl_number = 0.3
+</time>
+
+<hydro>
+  iso_sound_speed = 0.1
+</hydro>
+<problem>
+  rho0 = 0.5
+  sink_x0 = 0.0
+  sink_y0 = 0.0
+  sink_z0 = 0.0
+  r_sink = 0.03
+  rho_thr = 0.2
+  rho_floor = 1e-5
+  Msink0 = 0.02
+  g_soft = 0.02
+  Gconst = 1.0
+  jet_switch = 0
+
+  r_noz   = 0.04
+  L_noz   = 0.16
+  v_jet   = 1.0
+  rho_jet = 0.3
+</problem>
+
+<output1>
+  dcycle = 50
+  file_type = vtk
+  variable = prim
+  id = sinkjet
+</output1>
