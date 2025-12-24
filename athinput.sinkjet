@@ -1,6 +1,8 @@
+
 <job>
-  problem_id = nojet
+  problem_id = no_jet
 </job>
+  
 <mesh>
   mesh_type = cartesian
   nx1 = 64
@@ -12,28 +14,30 @@
   x2max =  0.5
   x3min = -0.5
   x3max =  0.5
-  ix1_bc = outflow
-  ox1_bc = outflow
-  ix2_bc = outflow
-  ox2_bc = outflow
-ix3_bc = outflow
-  ox3_bc = outflow
-</mesh>  
   
+  ix1_bc = periodic
+  ox1_bc = periodic
+  ix2_bc = periodic
+  ox2_bc = periodic
+  ix3_bc = periodic
+  ox3_bc = periodic
+</mesh> 
+
 <time>
   tlim = 0.5   
   nlim = -1
-  cfl_number = 0.3
+  cfl_number = 0.3 
 </time>
-  
+
 <hydro>
   iso_sound_speed = 0.1
 </hydro>
+
 <problem>
   rho0 = 1
   sink_x0 = 0.0
   sink_y0 = 0.0
-  sink_z0 = 0.0   
+  sink_z0 = 0.0    
   r_sink = 0.05
   rho_thr = 1e2
   rho_floor = 1e-3
@@ -43,12 +47,13 @@ ix3_bc = outflow
   jet_switch = 0
   
   r_noz   = 0.04
-  L_noz   = 0.16  
+  L_noz   = 0.16   
   v_jet   = 0.8
-  rho_jet = 0.3
+  rho_jet = 0.5
 </problem>
+  
 <output1>
-  dt = 0.01
+  dt = 0.01   
   file_type = vtk
   variable = prim
   id = sinkjet  
