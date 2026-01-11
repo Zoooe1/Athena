@@ -39,7 +39,7 @@
   r_sink = 0.03125
   rho_thr = 64
   rho_floor = 1e-6   
-  Msink0 = 0
+  Msink0 = 0.02
   g_soft = 0.03125
   Gconst = 3.14159265358979323846
   jet_switch = 0
