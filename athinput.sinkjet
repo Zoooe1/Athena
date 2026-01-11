@@ -23,7 +23,7 @@
 </mesh>
   
 <time>
-  tlim = 0.5
+  tlim = 0.61
   nlim = -1
   cfl_number = 0.3 #for 3D must be < 0.3
 </time>
@@ -37,7 +37,7 @@
   sink_y0 = 0.0
   sink_z0 = 0.0
   r_sink = 0.03125
-  rho_thr = 64
+  rho_thr = 10.24
   rho_floor = 1e-6   
   Msink0 = 0.02
   g_soft = 0.03125
