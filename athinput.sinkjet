@@ -36,7 +36,7 @@
   sink_x0 = 0.0
   sink_y0 = 0.0
   sink_z0 = 0.0
-  r_sink = 16
+  r_sink = 0.03125
   rho_thr = 64
   rho_floor = 1e-6   
   Msink0 = 0
