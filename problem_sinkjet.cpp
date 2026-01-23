@@ -210,8 +210,7 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     {
         last_time_sum = time;
     }
-    // Accretion: remove gas inside sink region above threshold
-    //-------------------------------------------------------
+    // Accretion: remove gas inside sink region above threshold-------------------------------------------------------
     // loop over every cells in the grid excluding the jet nozzle cells so that we don't immediately reaccrete the gas we just injected
     for (int k = pmb->ks; k <= pmb->ke; ++k)
     {
@@ -239,22 +238,24 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
 
                 const Real rho = cons(IDN, k, j, i);
                 if (rho <= S.rho_thr)
-                    continue;                         // below density threshold do nothing
-                const Real d_rho = rho - S.rho_floor; // Compute how much to remove
+                    continue; // below density threshold do nothing
+
+                Real d_rho = rho - S.rho_floor; // Compute how much to remove
+                d_rho = std::min(d_rho, 0.9 * rho);
                 if (d_rho <= 0.0)
-                    continue; // if density needs to reach rho_floor less or equal to 0, do nothing
+                    continue; // if density less or equal to 0, do nothing, if bigger, then good, proceed to actually remove
 
                 // Msink += removed_gas_mass
                 const Real Vcell = pmb->pcoord->GetCellVolume(k, j, i); // volume is read only, it's also k, j, i, not ijk, for Athena array reading, which i think is really wiered
                 // DEBUG Statement
                 const Real dM = d_rho * Vcell;
                 dMsink_local += dM;
-                // remove momentum of the removed gas so momentum stays the same
+                // remove momentum of the removed gas
                 cons(IDN, k, j, i) -= d_rho;
                 cons(IM1, k, j, i) -= d_rho * prim(IVX, k, j, i);
                 cons(IM2, k, j, i) -= d_rho * prim(IVY, k, j, i);
                 cons(IM3, k, j, i) -= d_rho * prim(IVZ, k, j, i);
-                // (isothermal: no energy variable here)
+                // physics: velocity of remaining gas is conserved, since gas mass is removed, gas momentum is not conserved
             }
         }
     }
@@ -369,8 +370,6 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
             dMjet_local += dM_used;
         }
     }
-
-    // --- this meshblock’s gas mass ---
     Real Mgas_local = 0.0;
     for (int k = pmb->ks; k <= pmb->ke; ++k)
     {
@@ -383,8 +382,8 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
             }
         }
     }
+
     S.mgas_step += Mgas_local;
     S.dm_acc_step += dMsink_local;
     S.dm_jet_step += dMjet_local;
 }
-
