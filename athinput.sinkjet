@@ -1,5 +1,5 @@
 <job>
-  problem_id = nojet
+  problem_id = jet
 </job>
 
 <mesh>
@@ -23,7 +23,7 @@
 </mesh>
   
 <time>
-  tlim = 0.61
+  tlim = 1.4
   nlim = -1
   cfl_number = 0.3 #for 3D must be < 0.3
 </time>
@@ -37,17 +37,21 @@
   sink_y0 = 0.0
   sink_z0 = 0.0
   r_sink = 0.03125
-  rho_thr = 10.24
-  rho_floor = 1e-6   
+  rho_thr = 4
+  rho_floor = 1e-6
   Msink0 = 0.02
   g_soft = 0.03125
   Gconst = 3.14159265358979323846
-  jet_switch = 0
+  jet_switch = 1
+  lock_pdot = 1   
   
-  r_noz   = 0.04
-  L_noz   = 0.16
-  v_jet   = 0.8
-  rho_jet = 1.0
+  Pdot = 0.001
+  r_noz   = 0.01875
+  L_noz   = 0.075 
+  v_jet   = 3.0
+  rho_jet = 2.0 
+  v_cap = 4.255384324
+
 </problem>
   
 <output1>
