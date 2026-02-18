@@ -683,7 +683,7 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
         }
         const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
         if (M_need <= 0.0)
-            return;
+            continue;
         if (V_nozzle_total > 0.0)
         {
             // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
