@@ -1,0 +1,63 @@
+<job>
+  problem_id = jet
+</job>
+
+<mesh>
+  mesh_type = cartesian
+  nx1 = 128
+  nx2 = 128
+  nx3 = 128
+  x1min = -0.5
+  x1max =  0.5
+  x2min = -0.5
+  x2max =  0.5
+  x3min = -0.5
+  x3max =  0.5
+  
+  ix1_bc = user
+  ox1_bc = user
+  ix2_bc = user
+  ox2_bc = user
+  ix3_bc = user
+  ox3_bc = user
+</mesh>
+  
+<time>
+  tlim = 1.4
+  nlim = -1
+  cfl_number = 0.3 #for 3D must be < 0.3
+</time>
+
+<hydro>
+  iso_sound_speed = 1
+</hydro>
+
+<problem>
+  rho0 = 1
+  sink_x0 = 0.0
+  sink_y0 = 0.0
+  sink_z0 = 0.0
+  r_sink = 0.046875
+  rho_thr = 16
+  rho_floor = 1e-6
+  Msink0 = 0.02
+  g_soft = 0.015625
+  Gconst = 3.14159265358979323846
+  jet_switch = 1
+  lock_pdot = 1
+
+  Pdot = 0.01
+  r_noz   = 0.028125
+  L_noz   = 0.1125
+  v_jet   = 3.0
+  rho_jet = 5
+  v_cap = 4.024065722
+
+</problem>
+
+<output1>
+  dt = 0.01
+  file_type = vtk
+  variable = prim
+  id = sinkjet
+</output1>
