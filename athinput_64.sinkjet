@@ -45,8 +45,8 @@
   jet_switch = 1
   lock_pdot = 1   
   
-  Pdot = 0.001
-  r_noz   = 0.01875
+  Pdot = 0.01
+  r_noz   = 0.01875 #cone:0.0324759526
   L_noz   = 0.075 
   v_jet   = 3.0
   rho_jet = 2.0 
