@@ -14,12 +14,12 @@
   x3min = -0.5
   x3max =  0.5
 
-  ix1_bc = User
-  ox1_bc = User
-  ix2_bc = User
-  ox2_bc = User
-  ix3_bc = User
-  ox3_bc = User
+  ix1_bc = user
+  ox1_bc = user
+  ix2_bc = user
+  ox2_bc = user
+  ix3_bc = user
+  ox3_bc = user
 </mesh>
   
 <time>
