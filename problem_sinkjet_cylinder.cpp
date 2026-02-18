@@ -279,7 +279,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
         S.rho_jet = pin->GetReal("problem", "rho_jet");
         S.v_cap = pin->GetOrAddReal("problem", "v_cap", 3.0);
         S.A_noz = M_PI * S.r_noz * S.r_noz;       // area per lobe
-        S.Pdot = pin->GetReal("problem", "Pdot"); // S.Pdot = S.rho_jet * S.v_jet * S.v_jet * S.A_noz; // per-lobe target
+        S.Pdot = pin->GetReal("problem", "Pdot"); // S.Pdot = 2* S.rho_jet * S.v_jet * S.v_jet * S.A_noz; // total
     }
     // fixed momentum
 
@@ -669,12 +669,12 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
             Real v_eff;
             if (S.lock_pdot)
             {
-                // choose v_eff so that momentum flux matches Pdot
-                v_eff = std::sqrt(S.Pdot / (rhoj * S.A_noz));
-                if (S.v_cap > 0.0)
-                {
-                    v_eff = std::min(v_eff, S.v_cap); // cap the speed
-                }
+                // compute v_eff so that momentum flux matches Pdot
+                v_eff = std::sqrt(S.Pdot / (2* rhoj * S.A_noz));
+                // if (S.v_cap > 0.0)
+                // {
+                //     v_eff = std::min(v_eff, S.v_cap); // cap the speed
+                // }
             }
             else
             {
@@ -733,4 +733,3 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     S.dm_jet_step += dMjet_local;
     AccumulateBoundaryFlux(pmb, prim, dt);
 }
-
