@@ -371,31 +371,53 @@ void Mesh::UserWorkInLoop()
     MPI_Allreduce(MPI_IN_PLACE, &in_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &out_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
 #endif
-
-    if (Globals::my_rank == 0)
+    const Real dt_global = this->dt;
+    if (dt_global <= 0.0)
     {
-        static bool wrote_header = false;
-        std::ofstream fb("boundary_flux.csv", std::ios::app);
-        fb.setf(std::ios::scientific);
-        fb.precision(16);
-
-        if (!wrote_header)
-        {
-            fb << "# time,"
-               << "in_x1min,out_x1min,in_x1max,out_x1max,"
-               << "in_x2min,out_x2min,in_x2max,out_x2max,"
-               << "in_x3min,out_x3min,in_x3max,out_x3max\n";
-            wrote_header = true;
-        }
-
-        fb << time << ","
-           << in_x1min << "," << out_x1min << ","
-           << in_x1max << "," << out_x1max << ","
-           << in_x2min << "," << out_x2min << ","
-           << in_x2max << "," << out_x2max << ","
-           << in_x3min << "," << out_x3min << ","
-           << in_x3max << "," << out_x3max << "\n";
     }
+    else
+    {
+
+        const Real accretion_rate = dm_acc / dt_global;
+        const Real jet_mass_removal_rate = dm_jet / dt_global;
+        const Real ratio = (jet_mass_removal_rate > 0.0) ? (accretion_rate / jet_mass_removal_rate) : 0.0;
+        if (Globals::my_rank == 0)
+        {
+            static bool wrote_header = false;
+            std::ofstream fb("boundary_flux.csv", std::ios::app);
+            fb.setf(std::ios::scientific);
+            fb.precision(16);
+
+            if (!wrote_header)
+            {
+                fb << "# time,"
+                   << "in_x1min,out_x1min,in_x1max,out_x1max,"
+                   << "in_x2min,out_x2min,in_x2max,out_x2max,"
+                   << "in_x3min,out_x3min,in_x3max,out_x3max\n";
+                wrote_header = true;
+            }
+
+            fb << time << ","
+               << in_x1min << "," << out_x1min << ","
+               << in_x1max << "," << out_x1max << ","
+               << in_x2min << "," << out_x2min << ","
+               << in_x2max << "," << out_x2max << ","
+               << in_x3min << "," << out_x3min << ","
+               << in_x3max << "," << out_x3max << "\n";
+
+            static bool wrote_rates_header = false;
+            std::ofstream fr("rates.csv", std::ios::app);
+            fr.setf(std::ios::scientific);
+            fr.precision(16);
+            if (!wrote_rates_header)
+            {
+                fr << "# time,dt,dm_acc,dm_jet,accretion_rate,jet_mass_removal_rate,ratio";
+                wrote_rates_header = true;
+            }
+            fr << time << "," << dt_global << "," << dm_acc << "," << dm_jet << "," << accretion_rate << "," << jet_mass_removal_rate << "," << ratio << "\n";
+        }
+    }
+
     S.dM_in_x1min = S.dM_out_x1min = 0;
     S.dM_in_x1max = S.dM_out_x1max = 0;
     S.dM_in_x2min = S.dM_out_x2min = 0;
@@ -405,11 +427,9 @@ void Mesh::UserWorkInLoop()
 
     S.Msink += (dm_acc - dm_jet);
 
-    // set M0
     if (S.M0 < 0.0)
         S.M0 = S.Msink + mgas;
 
-    // reset
     S.dm_acc_step = 0.0;
     S.dm_jet_step = 0.0;
     S.mgas_step = 0.0;
@@ -425,7 +445,7 @@ void Mesh::UserWorkInLoop()
         f.precision(16);
         f << time << "," << S.Msink << "," << mgas << "," << sfe_M0 << "," << sfe_inst << "\n";
     }
-}
+} // Userloop end
 
 static inline void DiodeBCImpl(
     BoundaryFace face,
@@ -578,28 +598,30 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                 const Real dx = xc - S.x0, dy = yc - S.y0, dz = zc - S.z0;
                 const Real r = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (r >= S.r_sink)
-                    continue; // if outside sink particle sphere do nothing
+                    continue; // inside sink particle sphere, proceed
 
                 const Real rho = cons(IDN, k, j, i);
                 if (rho <= S.rho_thr)
-                    continue; // below density threshold do nothing
+                    continue; // above density threshold, proceed
 
                 Real d_rho = rho - S.rho_floor; // Compute how much to remove
                 d_rho = std::min(d_rho, 0.9 * rho);
                 if (d_rho <= 0.0)
-                    continue; // if density less or equal to 0, do nothing, if bigger, then good, proceed to actually remove
+                    continue; // if density need is positive, then good, proceed to actually remove
 
                 // Msink += removed_gas_mass
                 const Real Vcell = pmb->pcoord->GetCellVolume(k, j, i); // volume is read only, it's also k, j, i, not ijk, for Athena array reading, which i think is really wiered
                 // DEBUG Statement
                 const Real dM = d_rho * Vcell;
                 dMsink_local += dM;
+                // Add removed surrounding mass to the sink particle
+
                 // remove momentum of the removed gas
                 cons(IDN, k, j, i) -= d_rho;
                 cons(IM1, k, j, i) -= d_rho * prim(IVX, k, j, i);
                 cons(IM2, k, j, i) -= d_rho * prim(IVY, k, j, i);
                 cons(IM3, k, j, i) -= d_rho * prim(IVZ, k, j, i);
-                // physics: velocity of remaining gas is conserved, since gas mass is removed, gas momentum is not conserved
+                // velocity of remaining gas is conserved, but gas mass is decreased, gas momentum is not conserved
             }
         }
     }
@@ -653,6 +675,8 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
         Real M_need = 0.0;
         Real M_nozzle_total = 0.0;
         Real rhoj = std::max(S.rho_jet, 1e-12);
+        Real v_eff;
+        // Real Px_inj = 0, Py_inj = 0, Pz_inj = 0;
         for (int k = pmb->ks; k <= pmb->ke; ++k)
         {
             const Real zc = x3v(k);
@@ -680,15 +704,12 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                       << "M_need =" << M_need << "\n";
         }
         const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
-        if (M_need <= 0.0)
-            return;
-        if (V_nozzle_total > 0.0)
+        if (V_nozzle_total > 0.0 && M_need > 0.0 && M_injected > 0.0)
         {
             // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
-            Real v_eff;
             if (S.lock_pdot)
             {
-                const Real P_total = S.Pdot * dt;
+                const Real P_total = S.Pdot * dt; // total, S.Pdot is for total not per lobe
                 // calc v_eff so that momentum flux matches Pdot
                 v_eff = P_total / M_injected;
                 // v_eff = std::min(v_eff, S.v_cap); // cap the speed
@@ -715,17 +736,29 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                         const bool plus = in_cone_plus(xc, yc, zc);              // in the upper lobe
                         const bool minus = (!plus) && in_cone_minus(xc, yc, zc); // in the downer lobe
                         if (!(plus || minus))
-                            continue; // do nothing if not in nozzle
+                            continue;                                                 // do nothing if not in nozzle
+                        const Real z0 = plus ? (S.z0 + S.r_sink) : (S.z0 - S.r_sink); // determine zapex depending on in which lobe to give it radial component velocity
+                        const Real rx = xc - S.x0;
+                        const Real ry = yc - S.y0;
+                        const Real rz = zc - z0;
+                        const Real vrmag = std::sqrt(rx * rx + ry * ry + rz * rz); // v radial magnitude
+                        if (vrmag < 1e-12)
+                            continue; // if too small, avoid dividing, continue = return
+                        const Real ux = rx / vrmag;
+                        const Real uy = ry / vrmag; // UNIT vectors
+                        const Real uz = rz / vrmag;
+
                         const Real dV = pmb->pcoord->GetCellVolume(k, j, i);
                         const Real dM = std::max(rhoj - cons(IDN, k, j, i), 0.0) * dV / M_need * M_injected; // find the inject jet mass distributed per cell
                         const Real dRho = dM / dV;                                                           // compute density increment
-
                         // add to current density
                         cons(IDN, k, j, i) += dRho;
 
-                        // calculate the injected momentum
-                        const Real dP = dM * v_eff * (plus ? +1.0 : -1.0); //+z lobe momentum is positive, -z lobe momentum is negative
-                        cons(IM3, k, j, i) += dP / dV;
+                        // calculate the injected momentum per cell
+                        const Real P = dM * v_eff; // only magnitude
+                        cons(IM1, k, j, i) += (P * ux) / dV;
+                        cons(IM2, k, j, i) += (P * uy) / dV;
+                        cons(IM3, k, j, i) += (P * uz) / dV;
                     }
                 }
             }
