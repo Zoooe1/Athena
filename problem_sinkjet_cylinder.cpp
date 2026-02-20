@@ -35,7 +35,7 @@ namespace
         Real rho_jet;   // density of jet
         Real A_noz;     // nozzle area
         int lock_pdot;  // 1 for fixed momentum
-        Real Pdot;      // value of momentum
+        Real Pdot;      // momentum flux
         Real v_cap;
 
         int exclude_nozzle_from_accretion; // for debug, default on
@@ -57,7 +57,6 @@ namespace
 
     } S; // S is a single storage box for all the sink+jet settings, like an object
 
-    // Check if a given cell is within the nozzle on the top of the sink particle sphere
     inline bool in_nozzle_plus(const Real x, const Real y, const Real z)
     {
         // +z lobe: axial window [z0 + r_sink, z0 + r_sink + L_noz]
@@ -279,7 +278,7 @@ void Mesh::InitUserMeshData(ParameterInput *pin)
         S.rho_jet = pin->GetReal("problem", "rho_jet");
         S.v_cap = pin->GetOrAddReal("problem", "v_cap", 3.0);
         S.A_noz = M_PI * S.r_noz * S.r_noz;       // area per lobe
-        S.Pdot = pin->GetReal("problem", "Pdot"); // S.Pdot = 2* S.rho_jet * S.v_jet * S.v_jet * S.A_noz; // total
+        S.Pdot = pin->GetReal("problem", "Pdot"); // S.Pdot = 2* S.rho_jet * S.v_jet^2 * S.A_noz;
     }
     // fixed momentum
 
@@ -655,7 +654,6 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
         Real M_need = 0.0;
         Real M_nozzle_total = 0.0;
         Real rhoj = std::max(S.rho_jet, 1e-12);
-        Real v_eff;
         for (int k = pmb->ks; k <= pmb->ke; ++k)
         {
             const Real zc = x3v(k);
@@ -682,60 +680,57 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                       << " M=" << M_nozzle_total
                       << "M_need =" << M_need << "\n";
         }
-        
         const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
-        if (V_nozzle_total > 0.0 && M_need > 0.0 && M_injected > 0.0)
+        if (M_need <= 0.0)
+            return;
+        if (V_nozzle_total > 0.0)
         {
-            if (V_nozzle_total > 0.0)
+            // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
+            Real v_eff;
+            if (S.lock_pdot)
             {
-                // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
-                if (S.lock_pdot)
+                const Real P_total = S.Pdot * dt;
+                // calc v_eff so that momentum flux matches Pdot
+                v_eff = P_total / M_injected;
+                // v_eff = std::min(v_eff, S.v_cap); // cap the speed
+            }
+            else
+            {
+                v_eff = S.v_jet;
+            }
+            if (Globals::my_rank == 0)
+            {
+                std::cout << "DEBUG target P_total=" << (S.Pdot * dt)
+                          << " v_eff=" << v_eff << "\n";
+            }
+            // Second: Distribute mass and momentum to each nozzle cell porportional to their volume; assign +z momentum in +lobe and -z in -lobe
+            for (int k = pmb->ks; k <= pmb->ke; ++k)
+            {
+                const Real zc = x3v(k);
+                for (int j = pmb->js; j <= pmb->je; ++j)
                 {
-                    const Real P_total = S.Pdot * dt; // total, S.Pdot is for total not per lobe
-                    // calc v_eff so that momentum flux matches Pdot
-                    v_eff = P_total / M_injected;
-                    // v_eff = std::min(v_eff, S.v_cap); // cap the speed
-                }
-                else
-                {
-                    v_eff = S.v_jet;
-                }
-                if (Globals::my_rank == 0)
-                {
-                    std::cout << "DEBUG target P_total=" << (S.Pdot * dt)
-                            << " v_eff=" << v_eff << "\n";
-                }
-
-                for (int k = pmb->ks; k <= pmb->ke; ++k)
-                {
-                    const Real zc = x3v(k);
-                    for (int j = pmb->js; j <= pmb->je; ++j)
+                    const Real yc = x2v(j);
+                    for (int i = pmb->is; i <= pmb->ie; ++i)
                     {
-                        const Real yc = x2v(j);
-                        for (int i = pmb->is; i <= pmb->ie; ++i)
-                        {
-                            const Real xc = x1v(i);
-                            const bool plus = in_nozzle_plus(xc, yc, zc);              // in the upper lobe
-                            const bool minus = (!plus) && in_nozzle_minus(xc, yc, zc); // in the downer lobe
-                            if (!(plus || minus))
-                                continue; // do nothing if not in nozzle
+                        const Real xc = x1v(i);
+                        const bool plus = in_nozzle_plus(xc, yc, zc);              // in the upper lobe
+                        const bool minus = (!plus) && in_nozzle_minus(xc, yc, zc); // in the downer lobe
+                        if (!(plus || minus))
+                            continue; // do nothing if not in nozzle
+                        const Real dV = pmb->pcoord->GetCellVolume(k, j, i);
+                        const Real dM = std::max(rhoj - cons(IDN, k, j, i), 0.0) * dV / M_need * M_injected; // find the inject jet mass distributed per cell
+                        const Real dRho = dM / dV;                                                           // compute density increment
 
-                            // find volume of the grid
-                            const Real dV = pmb->pcoord->GetCellVolume(k, j, i);
-                            const Real dM = std::max(rhoj - cons(IDN, k, j, i), 0.0) * dV / M_need * M_injected; // find the inject jet mass distributed per cell
-                            const Real dRho = dM / dV;                                                           // compute density increment
+                        // add to current density
+                        cons(IDN, k, j, i) += dRho;
 
-                            // add to conserved density
-                            cons(IDN, k, j, i) += dRho;
-
-                            // calculate the injected momentum
-                            const Real dP = dM * v_eff * (plus ? +1.0 : -1.0); //+z lobe momentum is positive, -z lobe momentum is negative
-                            cons(IM3, k, j, i) += dP / dV;
-                        }
+                        // calculate the injected momentum
+                        const Real dP = dM * v_eff * (plus ? +1.0 : -1.0); //+z lobe momentum is positive, -z lobe momentum is negative
+                        cons(IM3, k, j, i) += dP / dV;
+                    }
                 }
             }
             dMjet_local += M_injected;
-            }
         }
     }
     Real Mgas_local = 0.0;
@@ -755,3 +750,4 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     S.dm_jet_step += dMjet_local;
     AccumulateBoundaryFlux(pmb, prim, dt);
 }
+
