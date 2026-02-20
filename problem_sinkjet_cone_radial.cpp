@@ -653,8 +653,6 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
         Real M_need = 0.0;
         Real M_nozzle_total = 0.0;
         Real rhoj = std::max(S.rho_jet, 1e-12);
-        Real v_eff;
-        // Real Px_inj = 0, Py_inj = 0, Pz_inj = 0;
         for (int k = pmb->ks; k <= pmb->ke; ++k)
         {
             const Real zc = x3v(k);
@@ -682,12 +680,15 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                       << "M_need =" << M_need << "\n";
         }
         const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
-        if (V_nozzle_total > 0.0 && M_need > 0.0 && M_injected > 0.0)
+        if (M_need <= 0.0)
+            return;
+        if (V_nozzle_total > 0.0)
         {
             // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
+            Real v_eff;
             if (S.lock_pdot)
             {
-                const Real P_total = S.Pdot * dt; // total, S.Pdot is for total not per lobe
+                const Real P_total = S.Pdot * dt;
                 // calc v_eff so that momentum flux matches Pdot
                 v_eff = P_total / M_injected;
                 // v_eff = std::min(v_eff, S.v_cap); // cap the speed
@@ -714,29 +715,17 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                         const bool plus = in_cone_plus(xc, yc, zc);              // in the upper lobe
                         const bool minus = (!plus) && in_cone_minus(xc, yc, zc); // in the downer lobe
                         if (!(plus || minus))
-                            continue;                                                 // do nothing if not in nozzle
-                        const Real z0 = plus ? (S.z0 + S.r_sink) : (S.z0 - S.r_sink); // determine zapex depending on in which lobe to give it radial component velocity
-                        const Real rx = xc - S.x0;
-                        const Real ry = yc - S.y0;
-                        const Real rz = zc - z0;
-                        const Real vrmag = std::sqrt(rx * rx + ry * ry + rz * rz); // v radial magnitude
-                        if (vrmag < 1e-12)
-                            continue; // if too small, avoid dividing, continue = return
-                        const Real ux = rx / vrmag;
-                        const Real uy = ry / vrmag; // UNIT vectors
-                        const Real uz = rz / vrmag;
-
+                            continue; // do nothing if not in nozzle
                         const Real dV = pmb->pcoord->GetCellVolume(k, j, i);
                         const Real dM = std::max(rhoj - cons(IDN, k, j, i), 0.0) * dV / M_need * M_injected; // find the inject jet mass distributed per cell
                         const Real dRho = dM / dV;                                                           // compute density increment
+
                         // add to current density
                         cons(IDN, k, j, i) += dRho;
 
-                        // calculate the injected momentum per cell
-                        const Real P = dM * v_eff; // only magnitude
-                        cons(IM1, k, j, i) += (P * ux) / dV;
-                        cons(IM2, k, j, i) += (P * uy) / dV;
-                        cons(IM3, k, j, i) += (P * uz) / dV;
+                        // calculate the injected momentum
+                        const Real dP = dM * v_eff * (plus ? +1.0 : -1.0); //+z lobe momentum is positive, -z lobe momentum is negative
+                        cons(IM3, k, j, i) += dP / dV;
                     }
                 }
             }
