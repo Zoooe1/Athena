@@ -43,9 +43,16 @@ namespace
         std::FILE *fp = nullptr; // a pointer that will fill a CSV file only when open it, std:: means it's a standard C++ library namespace
 
         // these are summed over all meshblocks per timestep
-        Real dm_acc_step = 0.0; // total accretion mass
-        Real dm_jet_step = 0.0; // total jet mass removed from sink
-        Real mgas_step = 0.0;   // total gas mass
+        Real dm_acc_step = 0.0;        // total accretion mass
+        Real dm_jet_step = 0.0;        // total jet mass removed from sink
+        Real mgas_step = 0.0;          // total gas mass
+        Real rho_max_sink_step = -1.0; // DEBUG
+        long long n_sink_step = 0;
+        long long n_above_step = 0;
+        Real M_need_step = 0.0;   // Total M_need will split later
+        Real M_jet_removed = 0.0; // global jet mass
+        Real M_need_prev = 0.0;
+        Real f = 0.1;
 
         // 6 faces, 12 directions to track mass inflow and outflow
         Real dM_in_x1min = 0, dM_out_x1min = 0;
@@ -341,15 +348,24 @@ void Mesh::UserWorkInLoop()
     Real dm_acc = S.dm_acc_step;
     Real dm_jet = S.dm_jet_step;
     Real mgas = S.mgas_step;
+    Real rho_max_sink = S.rho_max_sink_step;
+    Real M_need_global = S.M_need_step;
+    long long n_sink = S.n_sink_step;
+    long long n_above = S.n_above_step;
 
 // This retrieve values and then combine all
 #ifdef MPI_PARALLEL
+    MPI_Allreduce(MPI_IN_PLACE, &rho_max_sink, 1, MPI_ATHENA_REAL, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &dm_acc, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &dm_jet, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &mgas, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &n_sink, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &n_above, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &M_need_global, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
-    Real in_x1min = S.dM_in_x1min, out_x1min = S.dM_out_x1min;
+    Real in_x1min = S.dM_in_x1min,
+         out_x1min = S.dM_out_x1min;
     Real in_x1max = S.dM_in_x1max, out_x1max = S.dM_out_x1max;
     Real in_x2min = S.dM_in_x2min, out_x2min = S.dM_out_x2min;
     Real in_x2max = S.dM_in_x2max, out_x2max = S.dM_out_x2max;
@@ -372,30 +388,52 @@ void Mesh::UserWorkInLoop()
     MPI_Allreduce(MPI_IN_PLACE, &in_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &out_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
 #endif
-
-    if (Globals::my_rank == 0)
+    S.M_jet_removed = S.f * dm_acc;
+    S.M_need_prev = M_need_global;
+    const Real dt_global = this->dt;
+    if (dt_global <= 0.0)
     {
-        static bool wrote_header = false;
-        std::ofstream fb("boundary_flux.csv", std::ios::app);
-        fb.setf(std::ios::scientific);
-        fb.precision(16);
-
-        if (!wrote_header)
+    }
+    else
+    {
+        const Real accretion_rate = dm_acc / dt_global;
+        const Real jet_mass_removal_rate = dm_jet / dt_global;
+        const Real ratio = (jet_mass_removal_rate > 0.0) ? (accretion_rate / jet_mass_removal_rate) : 0.0;
+        if (Globals::my_rank == 0)
         {
-            fb << "# time,"
-               << "in_x1min,out_x1min,in_x1max,out_x1max,"
-               << "in_x2min,out_x2min,in_x2max,out_x2max,"
-               << "in_x3min,out_x3min,in_x3max,out_x3max\n";
-            wrote_header = true;
-        }
+            static bool wrote_header = false;
+            std::ofstream fb("boundary_flux.csv", std::ios::app);
+            fb.setf(std::ios::scientific);
+            fb.precision(16);
 
-        fb << time << ","
-           << in_x1min << "," << out_x1min << ","
-           << in_x1max << "," << out_x1max << ","
-           << in_x2min << "," << out_x2min << ","
-           << in_x2max << "," << out_x2max << ","
-           << in_x3min << "," << out_x3min << ","
-           << in_x3max << "," << out_x3max << "\n";
+            if (!wrote_header)
+            {
+                fb << "# time,"
+                   << "in_x1min,out_x1min,in_x1max,out_x1max,"
+                   << "in_x2min,out_x2min,in_x2max,out_x2max,"
+                   << "in_x3min,out_x3min,in_x3max,out_x3max\n";
+                wrote_header = true;
+            }
+
+            fb << time << ","
+               << in_x1min << "," << out_x1min << ","
+               << in_x1max << "," << out_x1max << ","
+               << in_x2min << "," << out_x2min << ","
+               << in_x2max << "," << out_x2max << ","
+               << in_x3min << "," << out_x3min << ","
+               << in_x3max << "," << out_x3max << "\n";
+
+            static bool wrote_rates_header = false;
+            std::ofstream fr("rates.csv", std::ios::app);
+            fr.setf(std::ios::scientific);
+            fr.precision(16);
+            if (!wrote_rates_header)
+            {
+                fr << "# time,dt,dm_acc,dm_jet,accretion_rate,jet_mass_removal_rate,ratio, rho_max_sink, n_sink, n_above \n";
+                wrote_rates_header = true;
+            }
+            fr << time << "," << dt_global << "," << dm_acc << "," << dm_jet << "," << accretion_rate << "," << jet_mass_removal_rate << "," << ratio << "," << rho_max_sink << "," << n_sink << "," << n_above << "\n";
+        }
     }
     S.dM_in_x1min = S.dM_out_x1min = 0;
     S.dM_in_x1max = S.dM_out_x1max = 0;
@@ -405,8 +443,6 @@ void Mesh::UserWorkInLoop()
     S.dM_in_x3max = S.dM_out_x3max = 0;
 
     S.Msink += (dm_acc - dm_jet);
-
-    // set M0
     if (S.M0 < 0.0)
         S.M0 = S.Msink + mgas;
 
@@ -414,6 +450,10 @@ void Mesh::UserWorkInLoop()
     S.dm_acc_step = 0.0;
     S.dm_jet_step = 0.0;
     S.mgas_step = 0.0;
+    S.rho_max_sink_step = -1.0;
+    S.n_sink_step = 0;
+    S.n_above_step = 0;
+    S.M_need_step = 0.0;
 
     // write CSV once
     if (Globals::my_rank == 0)
@@ -426,7 +466,7 @@ void Mesh::UserWorkInLoop()
         f.precision(16);
         f << time << "," << S.Msink << "," << mgas << "," << sfe_M0 << "," << sfe_inst << "\n";
     }
-}
+} // UserLoop END
 
 static inline void DiodeBCImpl(
     BoundaryFace face,
@@ -550,6 +590,10 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     Real dMsink_local = 0.0;
     Real dMjet_local = 0.0;
     static Real last_time_sum = -1.0;
+    Real rho_max = -1.0;
+    int n_sink = 0;
+    int n_above = 0;
+    Real M_need = 0.0;
 
     if (time != last_time_sum)
     {
@@ -580,12 +624,13 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                 const Real r = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (r >= S.r_sink)
                     continue; // if outside sink particle sphere do nothing
-
+                n_sink++;
                 const Real rho = cons(IDN, k, j, i);
+                rho_max = std::max(rho_max, rho); // DEBUG
                 if (rho <= S.rho_thr)
                     continue; // below density threshold do nothing
-
-                Real d_rho = rho - S.rho_floor; // Compute how much to remove
+                n_above++;
+                Real d_rho = rho - S.rho_thr; // Compute how much to remove
                 d_rho = std::min(d_rho, 0.9 * rho);
                 if (d_rho <= 0.0)
                     continue; // if density less or equal to 0, do nothing, if bigger, then good, proceed to actually remove
@@ -643,17 +688,22 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     /*
     definitions:
       dM_need = How much mass each cell needs
-      M_need = How much total mass is needed to bring the nozzle region density to rho_jet
-      M_injected = How much mass we ACTUALLY inject, to cap from removing more mass than the sink have
+      M_need = How much mass is needed(/meshblock) to bring the nozzle region density to rho_jet
+      M_need_step = accumulate M_need on rank, later used to calculate M_need_global
+      M_need_global = not defined in this function but in User, How much M_need all meshblocks need in total
+      M_jet_removed = how much mass to inject this step in terms of f, = 0.1 * dM_acc
+      M_need_prev = scaling reference for distributing the global jet budget across meshblocks
+
+      ************ M_injected = How much mass we ACTUALLY inject, to cap (M_need, a bunch calc with 0.1 )
       dM = How much mass each cell receives
       */
     if (S.jet_switch)
     {
         // First: find the total nozzle volume of both lobes
         Real V_nozzle_total = 0.0;
-        Real M_need = 0.0;
         Real M_nozzle_total = 0.0;
         Real rhoj = std::max(S.rho_jet, 1e-12);
+        Real v_eff;
         for (int k = pmb->ks; k <= pmb->ke; ++k)
         {
             const Real zc = x3v(k);
@@ -680,13 +730,10 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                       << " M=" << M_nozzle_total
                       << "M_need =" << M_need << "\n";
         }
-        const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
-        if (M_need <= 0.0)
-            return;
-        if (V_nozzle_total > 0.0)
+        const Real M_injected = std::min(M_need, std::max(S.M_jet_removed * (M_need / S.M_need_prev), 1e-20));
+        if (V_nozzle_total > 0.0 && M_need > 0.0 && M_injected > 0.0)
         {
             // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
-            Real v_eff;
             if (S.lock_pdot)
             {
                 const Real P_total = S.Pdot * dt;
@@ -748,6 +795,10 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     S.mgas_step += Mgas_local;
     S.dm_acc_step += dMsink_local;
     S.dm_jet_step += dMjet_local;
+    S.n_above_step += n_above;
+    S.n_sink_step += n_sink;
+    S.M_need_step += M_need;
+    S.rho_max_sink_step = std::max(S.rho_max_sink_step, rho_max);
     AccumulateBoundaryFlux(pmb, prim, dt);
 }
 
