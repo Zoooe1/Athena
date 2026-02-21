@@ -46,6 +46,13 @@ namespace
         Real dm_acc_step = 0.0; // total accretion mass
         Real dm_jet_step = 0.0; // total jet mass removed from sink
         Real mgas_step = 0.0;   // total gas mass
+        Real rho_max_sink_step = -1.0;
+        Real M_need_step = 0.0;   // Total M_need will split later
+        Real M_jet_removed = 0.0; // global jet mass
+        Real M_need_prev = 0.0;
+        long long n_sink_step = 0;
+        long long n_above_step = 0;
+        Real f = 0.1;
 
         // 6 faces, 12 directions to track mass inflow and outflow
         Real dM_in_x1min = 0, dM_out_x1min = 0;
@@ -340,12 +347,20 @@ void Mesh::UserWorkInLoop()
     Real dm_acc = S.dm_acc_step;
     Real dm_jet = S.dm_jet_step;
     Real mgas = S.mgas_step;
+    Real rho_max_sink = S.rho_max_sink_step;
+    Real M_need_global = S.M_need_step;
+    long long n_sink = S.n_sink_step;
+    long long n_above = S.n_above_step;
 
 // This retrieve values and then combine all
 #ifdef MPI_PARALLEL
+    MPI_Allreduce(MPI_IN_PLACE, &rho_max_sink, 1, MPI_ATHENA_REAL, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &dm_acc, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &dm_jet, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &mgas, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &n_sink, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &n_above, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &M_need_global, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
 #endif
 
     Real in_x1min = S.dM_in_x1min, out_x1min = S.dM_out_x1min;
@@ -371,6 +386,8 @@ void Mesh::UserWorkInLoop()
     MPI_Allreduce(MPI_IN_PLACE, &in_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(MPI_IN_PLACE, &out_x3max, 1, MPI_ATHENA_REAL, MPI_SUM, MPI_COMM_WORLD);
 #endif
+    S.M_jet_removed = S.f * dm_acc;
+    S.M_need_prev = M_need_global;
     const Real dt_global = this->dt;
     if (dt_global <= 0.0)
     {
@@ -411,10 +428,10 @@ void Mesh::UserWorkInLoop()
             fr.precision(16);
             if (!wrote_rates_header)
             {
-                fr << "# time,dt,dm_acc,dm_jet,accretion_rate,jet_mass_removal_rate,ratio";
+                fr << "# time,dt,dm_acc,dm_jet,accretion_rate,jet_mass_removal_rate,ratio, rho_max_sink, n_sink, n_above \n";
                 wrote_rates_header = true;
             }
-            fr << time << "," << dt_global << "," << dm_acc << "," << dm_jet << "," << accretion_rate << "," << jet_mass_removal_rate << "," << ratio << "\n";
+            fr << time << "," << dt_global << "," << dm_acc << "," << dm_jet << "," << accretion_rate << "," << jet_mass_removal_rate << "," << ratio << "," << rho_max_sink << "," << n_sink << "," << n_above << "\n";
         }
     }
 
@@ -433,6 +450,10 @@ void Mesh::UserWorkInLoop()
     S.dm_acc_step = 0.0;
     S.dm_jet_step = 0.0;
     S.mgas_step = 0.0;
+    S.rho_max_sink_step = -1.0;
+    S.n_sink_step = 0;
+    S.n_above_step = 0;
+    S.M_need_step = 0.0;
 
     // write CSV once
     if (Globals::my_rank == 0)
@@ -569,6 +590,10 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     Real dMsink_local = 0.0;
     Real dMjet_local = 0.0;
     static Real last_time_sum = -1.0;
+    Real rho_max = -1.0;
+    int n_sink = 0;
+    int n_above = 0;
+    Real M_need = 0.0;
 
     if (time != last_time_sum)
     {
@@ -585,6 +610,7 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
             for (int i = pmb->is; i <= pmb->ie; ++i)
             {
                 const Real xc = x1v(i);
+                // DEBUG: WHY accretion never happen
 
                 // nozzle mask (bipolar cylinders)
                 bool in_noz = false; // we have to check if the cell is inside the sink particle
@@ -599,12 +625,13 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                 const Real r = std::sqrt(dx * dx + dy * dy + dz * dz);
                 if (r >= S.r_sink)
                     continue; // inside sink particle sphere, proceed
-
+                n_sink++;
                 const Real rho = cons(IDN, k, j, i);
+                rho_max = std::max(rho_max, rho); // DEBUG
                 if (rho <= S.rho_thr)
                     continue; // above density threshold, proceed
-
-                Real d_rho = rho - S.rho_floor; // Compute how much to remove
+                n_above++;
+                Real d_rho = rho - S.rho_thr; // Compute how much to remove
                 d_rho = std::min(d_rho, 0.9 * rho);
                 if (d_rho <= 0.0)
                     continue; // if density need is positive, then good, proceed to actually remove
@@ -664,15 +691,20 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     /*
     definitions:
       dM_need = How much mass each cell needs
-      M_need = How much total mass is needed to bring the nozzle region density to rho_jet
-      M_injected = How much mass we ACTUALLY inject, to cap from removing more mass than the sink have
+      M_need = How much mass is needed(/meshblock) to bring the nozzle region density to rho_jet
+      M_need_step = accumulate M_need on rank, later used to calculate M_need_global
+      M_need_global = not defined in this function but in User, How much M_need all meshblocks need in total
+      M_jet_removed = how much mass to inject this step in terms of f, = 0.1 * dM_acc
+      M_need_prev = scaling reference for distributing the global jet budget across meshblocks
+
+      ************ M_injected = How much mass we ACTUALLY inject, to cap (M_need, a bunch calc with 0.1 )
       dM = How much mass each cell receives
       */
+
     if (S.jet_switch)
     {
         // First: find the total nozzle volume of both lobes
         Real V_nozzle_total = 0.0;
-        Real M_need = 0.0;
         Real M_nozzle_total = 0.0;
         Real rhoj = std::max(S.rho_jet, 1e-12);
         Real v_eff;
@@ -703,7 +735,7 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
                       << " M=" << M_nozzle_total
                       << "M_need =" << M_need << "\n";
         }
-        const Real M_injected = std::min(M_need, std::max(S.Msink, 0.0));
+        const Real M_injected = std::min(M_need, std::max(S.M_jet_removed * (M_need / S.M_need_prev), 1e-20));
         if (V_nozzle_total > 0.0 && M_need > 0.0 && M_injected > 0.0)
         {
             // total mass injection rate = rho_jet * v_jet * A_face * 2 (two lobes)
@@ -780,5 +812,9 @@ void SinkJetSource(MeshBlock *pmb, const Real time, const Real dt,
     S.mgas_step += Mgas_local;
     S.dm_acc_step += dMsink_local;
     S.dm_jet_step += dMjet_local;
+    S.n_above_step += n_above;
+    S.n_sink_step += n_sink;
+    S.M_need_step += M_need;
+    S.rho_max_sink_step = std::max(S.rho_max_sink_step, rho_max);
     AccumulateBoundaryFlux(pmb, prim, dt);
 }
